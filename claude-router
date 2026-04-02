@@ -15,10 +15,29 @@ QUIET=false
 die()  { echo "error: $*" >&2; exit 1; }
 info() { $QUIET || echo ":: $*" >&2; }
 
+load_defaults() {
+  # Allow ~/.env to override defaults (API keys already use this pattern)
+  if [[ -f "$HOME/.env" ]]; then
+    local _p=$(grep '^CLAUDE_DEFAULT_PARAMS=' "$HOME/.env" | cut -d= -f2- 2>/dev/null || true)
+    local _w=$(grep '^CLAUDE_DEFAULT_WRAPPER=' "$HOME/.env" | cut -d= -f2- 2>/dev/null || true)
+    [[ -z "$_p" ]] || CLAUDE_DEFAULT_PARAMS="$_p"
+    [[ -z "$_w" ]] || CLAUDE_DEFAULT_WRAPPER="$_w"
+  fi
+}
+
+exec_wrapper() {
+  local _cmd=("$@")
+  if [[ -n "${CLAUDE_DEFAULT_WRAPPER:-}" ]]; then
+    eval "$CLAUDE_DEFAULT_WRAPPER ${_cmd[*]}"
+  else
+    exec "$@"
+  fi
+}
+
 load_api_key() {
   [[ -n "${OPENROUTER_API_KEY:-}" ]] && return
   if [[ -f "$HOME/.env" ]]; then
-    OPENROUTER_API_KEY=$(grep -oP '^OPENROUTER_API_KEY=\K.*' "$HOME/.env" 2>/dev/null || true)
+    OPENROUTER_API_KEY=$(grep '^OPENROUTER_API_KEY=' "$HOME/.env" | cut -d= -f2- 2>/dev/null || true)
   fi
   [[ -n "${OPENROUTER_API_KEY:-}" ]] || die "OPENROUTER_API_KEY not set (export it or add to ~/.env)"
 }
@@ -183,7 +202,13 @@ launch_claude() {
     info "Next time: claude-router $model_id"
   fi
 
-  exec claude "$@"
+  # Expand CLAUDE_DEFAULT_PARAMS into an array, prepend to user args
+  local _default_args=()
+  if [[ -n "${CLAUDE_DEFAULT_PARAMS:-}" ]]; then
+    eval "_default_args=($CLAUDE_DEFAULT_PARAMS)"
+  fi
+
+  exec_wrapper claude "${_default_args[@]}" "$@"
 }
 
 # ── main ─────────────────────────────────────────────────────────────────
@@ -212,6 +237,7 @@ EOF
 
 main() {
   check_deps
+  load_defaults
 
   [[ -t 2 ]] || QUIET=true
 

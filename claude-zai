@@ -1,0 +1,55 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# claude-zai — launch Claude Code with Zhipu GLM via Z.ai token plan
+
+# ── helpers ──────────────────────────────────────────────────────────────
+
+die()  { echo "error: $*" >&2; exit 1; }
+
+load_defaults() {
+  # Allow ~/.env to override defaults (API keys already use this pattern)
+  if [[ -f "$HOME/.env" ]]; then
+    local _p=$(grep '^CLAUDE_DEFAULT_PARAMS=' "$HOME/.env" | cut -d= -f2- 2>/dev/null || true)
+    local _w=$(grep '^CLAUDE_DEFAULT_WRAPPER=' "$HOME/.env" | cut -d= -f2- 2>/dev/null || true)
+    [[ -z "$_p" ]] || CLAUDE_DEFAULT_PARAMS="$_p"
+    [[ -z "$_w" ]] || CLAUDE_DEFAULT_WRAPPER="$_w"
+  fi
+}
+
+exec_wrapper() {
+  local _cmd=("$@")
+  if [[ -n "${CLAUDE_DEFAULT_WRAPPER:-}" ]]; then
+    eval "$CLAUDE_DEFAULT_WRAPPER ${_cmd[*]}"
+  else
+    exec "$@"
+  fi
+}
+
+# ── main ─────────────────────────────────────────────────────────────────
+
+load_defaults
+
+ZAI_API_KEY=$(grep '^ZAI_API_KEY=' "$HOME/.env" | cut -d= -f2- 2>/dev/null || true)
+if [[ -z "$ZAI_API_KEY" ]]; then
+  die "ZAI_API_KEY not set (export it or add to ~/.env)"
+fi
+
+export ANTHROPIC_BASE_URL="https://api.z.ai/api/anthropic"
+export ANTHROPIC_AUTH_TOKEN="$ZAI_API_KEY"
+export API_TIMEOUT_MS="3000000"
+export CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1
+export ANTHROPIC_MODEL="glm-5.1"
+export ANTHROPIC_SMALL_FAST_MODEL="glm-5.1"
+export ANTHROPIC_DEFAULT_SONNET_MODEL="glm-5.1"
+export ANTHROPIC_DEFAULT_OPUS_MODEL="glm-5.1"
+export ANTHROPIC_DEFAULT_HAIKU_MODEL="glm-5.1"
+
+# Expand CLAUDE_DEFAULT_PARAMS
+_default_args=()
+if [[ -n "${CLAUDE_DEFAULT_PARAMS:-}" ]]; then
+  eval "_default_args=($CLAUDE_DEFAULT_PARAMS)"
+fi
+
+echo "Launching Claude Code with Zhipu GLM (Z.ai)" >&2
+exec_wrapper claude --dangerously-skip-permissions "${_default_args[@]}" "$@"
