@@ -1,0 +1,300 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# claude-router — pick an OpenRouter model, launch Claude Code with it
+
+CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/claude-router"
+CACHE_FILE="$CACHE_DIR/models.json"
+CACHE_MAX_AGE=86400 # 1 day in seconds
+API_URL="https://openrouter.ai/api/v1/models"
+MIN_CTX=120000
+
+# ── helpers ──────────────────────────────────────────────────────────────
+
+QUIET=false
+die()  { echo "error: $*" >&2; exit 1; }
+info() { $QUIET || echo ":: $*" >&2; }
+
+load_api_key() {
+  [[ -n "${OPENROUTER_API_KEY:-}" ]] && return
+  if [[ -f "$HOME/.env" ]]; then
+    OPENROUTER_API_KEY=$(grep -oP '^OPENROUTER_API_KEY=\K.*' "$HOME/.env" 2>/dev/null || true)
+  fi
+  [[ -n "${OPENROUTER_API_KEY:-}" ]] || die "OPENROUTER_API_KEY not set (export it or add to ~/.env)"
+}
+
+check_deps() {
+  local missing=()
+  for cmd in curl jq; do
+    command -v "$cmd" &>/dev/null || missing+=("$cmd")
+  done
+  (( ${#missing[@]} == 0 )) && return
+  echo "Missing required tools: ${missing[*]}" >&2
+  echo "" >&2
+  echo "Install them:" >&2
+  echo "  Ubuntu/Debian:  sudo apt install ${missing[*]}" >&2
+  echo "  Fedora:         sudo dnf install ${missing[*]}" >&2
+  echo "  Arch:           sudo pacman -S ${missing[*]}" >&2
+  echo "  macOS:          brew install ${missing[*]}" >&2
+  exit 1
+}
+
+check_fzf() {
+  command -v fzf &>/dev/null && return 0
+  cat >&2 <<'EOF'
+fzf is not installed. Install it for interactive model picking:
+
+  Ubuntu/Debian:  sudo apt install fzf
+  Fedora:         sudo dnf install fzf
+  Arch:           sudo pacman -S fzf
+  macOS:          brew install fzf
+  Windows (WSL):  sudo apt install fzf
+
+Or download from https://github.com/junegunn/fzf
+
+Meanwhile, use: claude-router --list    (browse models)
+                claude-router <model-id> (launch directly)
+                claude-router auto       (best free model)
+EOF
+  return 1
+}
+
+# ── model cache ──────────────────────────────────────────────────────────
+
+fetch_models() {
+  mkdir -p "$CACHE_DIR"
+  info "Fetching models from OpenRouter..."
+  curl -sf "$API_URL" \
+    | jq '[.data[]
+      | select(.architecture.input_modalities  | index("text"))
+      | select(.architecture.output_modalities | index("text"))
+      | {
+          id:      .id,
+          name:    .name,
+          ctx:     .context_length,
+          pin:     ((.pricing.prompt    | tonumber) * 1000000 | round / 100),
+          pout:    ((.pricing.completion | tonumber) * 1000000 | round / 100),
+          created: .created,
+          params:  (.supported_parameters // []),
+        }
+      | select(.params | index("tools"))
+      ]' > "$CACHE_FILE" \
+    || die "Failed to fetch models"
+}
+
+ensure_cache() {
+  if [[ -f "$CACHE_FILE" ]]; then
+    local age=$(( $(date +%s) - $(stat -c %Y "$CACHE_FILE" 2>/dev/null || stat -f %m "$CACHE_FILE" 2>/dev/null) ))
+    (( age < CACHE_MAX_AGE )) && return
+  fi
+  fetch_models
+}
+
+# ── model queries ────────────────────────────────────────────────────────
+
+# Build a jq filter for the cached model list
+# Usage: model_filter [free]
+model_filter() {
+  local f="[.[] | select(.ctx >= $MIN_CTX)"
+  [[ "${1:-}" == "free" ]] && f+=" | select(.pin == 0 and .pout == 0)"
+  echo "$f] | sort_by(-.created)"
+}
+
+models_table() {
+  jq -r "$(model_filter "${1:-}") | .[]
+    | [
+        .id,
+        (if .pin == 0 and .pout == 0 then \"FREE\" else (\"$\" + (.pin | tostring) + \"/$\" + (.pout | tostring)) end),
+        ((.ctx / 1000 | floor | tostring) + \"K\"),
+        (.created | strftime(\"%Y-%m-%d\"))
+      ] | join(\" | \")" "$CACHE_FILE"
+}
+
+# ── model selection ──────────────────────────────────────────────────────
+
+verify_model() {
+  local model_id="$1" api_key="$2"
+  local payload
+  payload=$(jq -n --arg m "$model_id" '{"model":$m,"max_tokens":1,"messages":[{"role":"user","content":"."}]}')
+  local response
+  response=$(curl -sf -o - -w "\n%{http_code}" \
+    https://openrouter.ai/api/v1/messages \
+    -H "x-api-key: $api_key" \
+    -H "Content-Type: application/json" \
+    -H "anthropic-version: 2023-06-01" \
+    -d "$payload" 2>/dev/null)
+  local http_code="${response##*$'\n'}"
+  [[ "$http_code" == "200" ]]
+}
+
+# Find a working model from candidates, verifying each against the API
+find_working_model() {
+  local candidates="$1"
+  load_api_key
+  for id in $candidates; do
+    info "Trying $id..."
+    if verify_model "$id" "$OPENROUTER_API_KEY"; then
+      echo "$id"
+      return
+    fi
+  done
+}
+
+auto_select() {
+  local candidates
+  candidates=$(jq -r "$(model_filter free) | .[].id" "$CACHE_FILE")
+  find_working_model "$candidates"
+}
+
+fuzzy_match() {
+  local query="$1" filter="${2:-}"
+  local candidates
+  candidates=$(jq -r --arg q "$query" \
+    "$(model_filter "$filter") | [.[] | select(.id | ascii_downcase | contains(\$q | ascii_downcase))] | .[].id" \
+    "$CACHE_FILE")
+  find_working_model "$candidates"
+}
+
+# ── launch ───────────────────────────────────────────────────────────────
+
+launch_claude() {
+  local model_id="$1"
+  shift
+
+  load_api_key
+
+  export ANTHROPIC_BASE_URL="https://openrouter.ai/api"
+  export ANTHROPIC_AUTH_TOKEN="$OPENROUTER_API_KEY"
+  export ANTHROPIC_API_KEY=""
+  export API_TIMEOUT_MS="3000000"
+  export CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1
+  export ANTHROPIC_MODEL="$model_id"
+  export ANTHROPIC_SMALL_FAST_MODEL="$model_id"
+  export ANTHROPIC_DEFAULT_SONNET_MODEL="$model_id"
+  export ANTHROPIC_DEFAULT_OPUS_MODEL="$model_id"
+  export ANTHROPIC_DEFAULT_HAIKU_MODEL="$model_id"
+
+  local model_name
+  model_name=$(jq -r --arg id "$model_id" '.[] | select(.id == $id) | .name // $id' "$CACHE_FILE" 2>/dev/null || echo "$model_id")
+
+  export CLAUDE_ROUTER_MODEL="$model_name"
+  info "Launching Claude Code with $model_name"
+  if [[ "${CLAUDE_ROUTER_INTERACTIVE:-}" == "1" ]]; then
+    info "Next time: claude-router $model_id"
+  fi
+
+  exec claude "$@"
+}
+
+# ── main ─────────────────────────────────────────────────────────────────
+
+usage() {
+  cat <<'EOF'
+Usage: claude-router [options] [model-id|auto] [-- claude-args...]
+
+Options:
+  --list         List available models
+  --free         Show/pick from free models only
+  --ctx N        Minimum context size in K (default: 120)
+  --refresh      Force-refresh the model cache
+  -h, --help     Show this help
+
+Examples:
+  claude-router                    Interactive picker (requires fzf)
+  claude-router auto               Best free model
+  claude-router --free             Pick from free models
+  claude-router --ctx 200          Only models with 200K+ context
+  claude-router openai/gpt-4o     Launch with specific model
+  claude-router --list             Browse models
+  claude-router auto -p "hi"      Pass args to claude
+EOF
+}
+
+main() {
+  check_deps
+
+  [[ -t 2 ]] || QUIET=true
+
+  local free_only=false
+  local list_only=false
+  local model=""
+  local claude_args=()
+
+  while (( $# > 0 )); do
+    case "$1" in
+      --)          shift; claude_args+=("$@"); break ;;
+      --list)      list_only=true ;;
+      --free)      free_only=true ;;
+      --ctx)       shift; MIN_CTX=$(( ${1:-120} * 1000 )) ;;
+      --refresh)   rm -f "$CACHE_FILE" ;;
+      -h|--help)   usage; exit 0 ;;
+      *)
+        model="$1"; shift
+        claude_args+=("$@"); break
+        ;;
+    esac
+    shift
+  done
+
+  # Detect -p/--print in claude args to suppress info output
+  for arg in ${claude_args[@]+"${claude_args[@]}"}; do
+    case "$arg" in -p|--print) QUIET=true; break ;; esac
+  done
+
+  ensure_cache
+
+  # --list: just print and exit
+  if $list_only; then
+    local filter=""
+    $free_only && filter="free"
+    echo "Model | Cost (in/out per 1M) | Context | Released"
+    echo "------|----------------------|---------|--------"
+    models_table "$filter"
+    exit 0
+  fi
+
+  # auto: pick best free model
+  if [[ "$model" == "auto" ]]; then
+    model=$(auto_select)
+    [[ -n "$model" ]] || die "No free models available"
+    launch_claude "$model" ${claude_args[@]+"${claude_args[@]}"}
+  fi
+
+  # Model given: try exact match, then fuzzy
+  if [[ -n "$model" ]]; then
+    if jq -e --arg id "$model" 'any(.[]; .id == $id)' "$CACHE_FILE" &>/dev/null; then
+      launch_claude "$model" ${claude_args[@]+"${claude_args[@]}"}
+    fi
+    local filter=""
+    $free_only && filter="free"
+    local matched
+    matched=$(fuzzy_match "$model" "$filter")
+    if [[ -n "$matched" ]]; then
+      launch_claude "$matched" ${claude_args[@]+"${claude_args[@]}"}
+    fi
+    die "No model matching '$model' found"
+  fi
+
+  # Interactive picker
+  check_fzf || exit 1
+
+  local filter=""
+  $free_only && filter="free"
+
+  local picked
+  picked=$(models_table "$filter" \
+    | fzf --height=40% --reverse --tiebreak=index \
+           --header="Model | Cost (in/out /1M) | Context | Released  [type to filter]" \
+           --prompt="model> " \
+    | cut -d'|' -f1 | xargs)
+
+  [[ -n "$picked" ]] || { info "Cancelled."; exit 0; }
+
+  CLAUDE_ROUTER_INTERACTIVE=1
+
+  launch_claude "$picked" ${claude_args[@]+"${claude_args[@]}"}
+}
+
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+  main "$@"
+fi
