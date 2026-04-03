@@ -208,7 +208,7 @@ launch_claude() {
     eval "_default_args=($CLAUDE_DEFAULT_PARAMS)"
   fi
 
-  exec_wrapper claude "${_default_args[@]}" "$@"
+  exec_wrapper claude ${_default_args[@]+"${_default_args[@]}"} "$@"
 }
 
 # ── main ─────────────────────────────────────────────────────────────────
