@@ -12,6 +12,9 @@ load_defaults() {
   if [[ -f "$HOME/.env" ]]; then
     local _p=$(grep '^CLAUDE_DEFAULT_PARAMS=' "$HOME/.env" | cut -d= -f2- 2>/dev/null || true)
     local _w=$(grep '^CLAUDE_DEFAULT_WRAPPER=' "$HOME/.env" | cut -d= -f2- 2>/dev/null || true)
+    # Strip surrounding quotes (cut preserves them from .env files)
+    _p="${_p#\"}"; _p="${_p%\"}"
+    _w="${_w#\"}"; _w="${_w%\"}"
     [[ -z "$_p" ]] || CLAUDE_DEFAULT_PARAMS="$_p"
     [[ -z "$_w" ]] || CLAUDE_DEFAULT_WRAPPER="$_w"
   fi
@@ -31,6 +34,7 @@ exec_wrapper() {
 load_defaults
 
 MINIMAX_API_KEY=$(grep '^MINIMAX_API_KEY=' "$HOME/.env" | cut -d= -f2- 2>/dev/null || true)
+MINIMAX_API_KEY="${MINIMAX_API_KEY#\"}"; MINIMAX_API_KEY="${MINIMAX_API_KEY%\"}"
 if [[ -z "$MINIMAX_API_KEY" ]]; then
   die "MINIMAX_API_KEY not set (export it or add to ~/.env)"
 fi

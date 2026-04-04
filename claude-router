@@ -20,6 +20,9 @@ load_defaults() {
   if [[ -f "$HOME/.env" ]]; then
     local _p=$(grep '^CLAUDE_DEFAULT_PARAMS=' "$HOME/.env" | cut -d= -f2- 2>/dev/null || true)
     local _w=$(grep '^CLAUDE_DEFAULT_WRAPPER=' "$HOME/.env" | cut -d= -f2- 2>/dev/null || true)
+    # Strip surrounding quotes (cut preserves them from .env files)
+    _p="${_p#\"}"; _p="${_p%\"}"
+    _w="${_w#\"}"; _w="${_w%\"}"
     [[ -z "$_p" ]] || CLAUDE_DEFAULT_PARAMS="$_p"
     [[ -z "$_w" ]] || CLAUDE_DEFAULT_WRAPPER="$_w"
   fi
@@ -38,6 +41,7 @@ load_api_key() {
   [[ -n "${OPENROUTER_API_KEY:-}" ]] && return
   if [[ -f "$HOME/.env" ]]; then
     OPENROUTER_API_KEY=$(grep '^OPENROUTER_API_KEY=' "$HOME/.env" | cut -d= -f2- 2>/dev/null || true)
+    OPENROUTER_API_KEY="${OPENROUTER_API_KEY#\"}"; OPENROUTER_API_KEY="${OPENROUTER_API_KEY%\"}"
   fi
   [[ -n "${OPENROUTER_API_KEY:-}" ]] || die "OPENROUTER_API_KEY not set (export it or add to ~/.env)"
 }
