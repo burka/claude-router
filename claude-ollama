@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# claude-ollama — shorthand for launching Claude Code with a local Ollama model
+# Native alternative: ollama launch claude --model gemma4:26b
+
+MODEL="${1:-gemma4:26b}"
+shift 2>/dev/null || true
+OLLAMA_HOST="${OLLAMA_HOST:-http://localhost:11434}"
+
+command -v ollama &>/dev/null || { echo "error: ollama not installed (https://ollama.com)" >&2; exit 1; }
+ollama list 2>/dev/null | grep -q "^${MODEL}" || ollama pull "$MODEL"
+
+export ANTHROPIC_BASE_URL="${OLLAMA_HOST}/v1"
+export ANTHROPIC_AUTH_TOKEN="ollama"
+export ANTHROPIC_API_KEY="ollama"
+export API_TIMEOUT_MS="3000000"
+export CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1
+export ANTHROPIC_MODEL="$MODEL"
+export ANTHROPIC_SMALL_FAST_MODEL="$MODEL"
+export ANTHROPIC_DEFAULT_SONNET_MODEL="$MODEL"
+export ANTHROPIC_DEFAULT_OPUS_MODEL="$MODEL"
+export ANTHROPIC_DEFAULT_HAIKU_MODEL="$MODEL"
+
+echo ":: Launching Claude Code with Ollama ($MODEL)" >&2
+exec claude --dangerously-skip-permissions "$@"

@@ -1,6 +1,6 @@
 # claude-router
 
-Pick an [OpenRouter](https://openrouter.ai) model, launch [Claude Code](https://docs.anthropic.com/en/docs/claude-code) with it. Also includes provider scripts for MiniMax and Z.ai.
+Pick an [OpenRouter](https://openrouter.ai) model, launch [Claude Code](https://docs.anthropic.com/en/docs/claude-code) with it. Also includes provider scripts for MiniMax, Z.ai, and local models via [Ollama](https://ollama.com).
 
 ## Install
 
@@ -10,8 +10,9 @@ git clone https://github.com/burka/claude-router.git
 ln -s "$(pwd)/claude-router/claude-router"  ~/.local/bin/claude-router
 ln -s "$(pwd)/claude-router/claude-minimax" ~/.local/bin/claude-minimax
 ln -s "$(pwd)/claude-router/claude-zai"    ~/.local/bin/claude-zai
+ln -s "$(pwd)/claude-router/claude-ollama" ~/.local/bin/claude-ollama
 
-# Set API keys in ~/.env
+# Set API keys in ~/.env (not needed for Ollama)
 echo "OPENROUTER_API_KEY=sk-or-..."  >> ~/.env
 echo "MINIMAX_API_KEY=..."           >> ~/.env
 echo "ZAI_API_KEY=..."               >> ~/.env
@@ -31,6 +32,12 @@ claude-router auto -- -p "hello"     # Pass args to claude
 
 claude-minimax                       # Launch with MiniMax MoE
 claude-zai                           # Launch with Zhipu GLM (Z.ai token plan)
+claude-ollama                        # Local Ollama shorthand (default: gemma4:26b)
+claude-ollama qwen3.5:35b-a3b       # Local Ollama with specific model
+
+# Or use Ollama's built-in Claude Code integration directly:
+ollama launch claude --model gemma4:26b
+ollama launch claude --model qwen3.5:35b-a3b
 ```
 
 ## Default Parameters
@@ -66,12 +73,38 @@ CLAUDE_DEFAULT_WRAPPER="nice -n 20 taskset -c 2-7 prlimit --as=128000000000 --rs
 CLAUDE_DEFAULT_WRAPPER="echo running:" claude-router -p "hello"
 ```
 
+## Local Models with Ollama
+
+Run Claude Code against local models — no API key needed, fully offline.
+
+### Native way (Ollama ≥ 0.9)
+
+```bash
+ollama launch claude --model gemma4:26b
+ollama launch claude --model qwen3.5:35b-a3b
+```
+
+This is Ollama's built-in Claude Code integration — it handles download, serving, and env setup for you.
+
+### Shorthand via `claude-ollama`
+
+`claude-ollama` is a thin wrapper (~25 lines) that does the same thing with auto-pull:
+
+```bash
+claude-ollama                        # Default: gemma4:26b
+claude-ollama qwen3.5:35b-a3b       # Use Qwen 3.5
+claude-ollama gemma4:26b -p "hi"    # Pass args to claude
+
+OLLAMA_HOST=http://192.168.1.100:11434 claude-ollama  # Remote host
+```
+
 ## How it works
 
 1. `claude-router` fetches models from the OpenRouter API (cached daily in `~/.cache/claude-router/`)
 2. Filters for text models with tool support
 3. Sets `ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN`, and model env vars, then launches `claude`
 4. `claude-minimax` and `claude-zai` set their provider's endpoint and auth directly
+5. `claude-ollama` connects to a local Ollama instance via its OpenAI-compatible API (`/v1`)
 
 ## License
 
