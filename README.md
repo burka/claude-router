@@ -8,8 +8,9 @@ Pick an [OpenRouter](https://openrouter.ai) model, launch [Claude Code](https://
 # Clone and symlink all scripts
 git clone https://github.com/burka/claude-router.git
 ln -s "$(pwd)/claude-router/claude-router"  ~/.local/bin/claude-router
-ln -s "$(pwd)/claude-router/claude-minimax" ~/.local/bin/claude-minimax
-ln -s "$(pwd)/claude-router/claude-zai"    ~/.local/bin/claude-zai
+ln -s "$(pwd)/claude-router/claude-minimax"         ~/.local/bin/claude-minimax
+ln -s "$(pwd)/claude-router/claude-minimax-highspeed" ~/.local/bin/claude-minimax-highspeed
+ln -s "$(pwd)/claude-router/claude-zai"             ~/.local/bin/claude-zai
 ln -s "$(pwd)/claude-router/claude-ollama" ~/.local/bin/claude-ollama
 
 # Set API keys in ~/.env (not needed for Ollama)
@@ -39,6 +40,22 @@ claude-ollama qwen3.5:35b-a3b       # Local Ollama with specific model
 ollama launch claude --model gemma4:26b
 ollama launch claude --model qwen3.5:35b-a3b
 ```
+
+## MiniMax Model Selection
+
+By default `claude-minimax` uses `MiniMax-M2.7`. You can override with the `MINIMAX_MODEL` env var:
+
+```bash
+# ~/.env
+MINIMAX_MODEL=MiniMax-M2.1-Fusion   # Optimized high-speed variant
+```
+
+Or via environment:
+```bash
+MINIMAX_MODEL=MiniMax-M2.1-Fusion claude-minimax
+```
+
+`claude-minimax-highspeed` is a thin wrapper that defaults to `MiniMax-M2.1-Fusion` — use it when you want the optimized variant without setting the env var.
 
 ## Default Parameters
 
