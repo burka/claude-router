@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# claude-minimax-highspeed — launch Claude Code with MiniMax-M2.1-Fusion (optimized variant)
+# claude-minimax-highspeed — launch Claude Code with MiniMax-M2.7-highspeed (optimized variant)
 # All other settings identical to claude-minimax; only the model differs.
 
+export MINIMAX_MODEL="MiniMax-M2.7-highspeed"
 exec "$HOME/.local/bin/claude-minimax" "$@"

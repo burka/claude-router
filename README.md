@@ -47,12 +47,12 @@ By default `claude-minimax` uses `MiniMax-M2.7`. You can override with the `MINI
 
 ```bash
 # ~/.env
-MINIMAX_MODEL=MiniMax-M2.1-Fusion   # Optimized high-speed variant
+MINIMAX_MODEL=MiniMax-M2.7-highspeed   # Optimized high-speed variant
 ```
 
 Or via environment:
 ```bash
-MINIMAX_MODEL=MiniMax-M2.1-Fusion claude-minimax
+MINIMAX_MODEL=MiniMax-M2.7-highspeed claude-minimax
 ```
 
 `claude-minimax-highspeed` is a thin wrapper that defaults to `MiniMax-M2.1-Fusion` — use it when you want the optimized variant without setting the env var.
